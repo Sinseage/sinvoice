@@ -2,12 +2,12 @@
 <html lang="ru" data-theme="dark">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src ws: wss:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src ws: wss:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>SINVoice</title>
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-  <svg class="sprite" xmlns="http://www.w3.org/2000/svg">
+<body class="sv-page">
+  <svg class="sv-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></symbol>
     <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="M19 11h-2a5 5 0 0 1-.7 2.56l1.46 1.46A6.96 6.96 0 0 0 19 11zM15 11V5a3 3 0 0 0-5.94-.6L15 10.34V11zM4.27 3 3 4.27l6 6V11a3 3 0 0 0 4.38 2.65l1.52 1.52A5 5 0 0 1 7 11H5a7 7 0 0 0 6 6.92V21h2v-3.08a6.9 6.9 0 0 0 3.32-1.33L19.73 20 21 18.73 4.27 3z"/></symbol>
     <symbol id="i-head" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0-9 9v7a2 2 0 0 0 2 2h3v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h3a2 2 0 0 0 2-2v-7a9 9 0 0 0-9-9z"/></symbol>
@@ -26,148 +26,165 @@
     <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></symbol>
   </svg>
 
-  <div class="app">
-    <header class="titlebar">
-      <img class="titlebar__icon" src="assets/icon.png" alt="">
-      <span class="titlebar__name">SINVoice</span>
-      <div class="titlebar__drag"></div>
-      <button class="winbtn" id="winMin" title="Свернуть"><svg><use href="#i-min"/></svg></button>
-      <button class="winbtn" id="winMax" title="Развернуть"><svg><use href="#i-max"/></svg></button>
-      <button class="winbtn winbtn--close" id="winClose" title="Закрыть"><svg><use href="#i-x"/></svg></button>
+  <div class="sv-app">
+    <header class="sv-titlebar">
+      <img class="sv-titlebar__icon" src="assets/icon.png" alt="" width="24" height="24">
+      <span class="sv-titlebar__name">SINVoice</span>
+      <span class="sv-titlebar__drag"></span>
+      <button class="sv-titlebar__button" type="button" data-sv="winMin" aria-label="Свернуть" title="Свернуть"><svg class="sv-icon sv-icon_small"><use href="#i-min"/></svg></button>
+      <button class="sv-titlebar__button" type="button" data-sv="winMax" aria-label="Развернуть" title="Развернуть"><svg class="sv-icon sv-icon_small"><use href="#i-max"/></svg></button>
+      <button class="sv-titlebar__button sv-titlebar__button_close" type="button" data-sv="winClose" aria-label="Закрыть" title="Закрыть"><svg class="sv-icon sv-icon_small"><use href="#i-x"/></svg></button>
     </header>
 
-    <div class="body">
-      <aside class="sidebar">
-        <button class="btn btn--primary btn--block" id="hostBtn"><svg><use href="#i-plus"/></svg><span>Поднять сервер</span></button>
-        <div class="host-info" id="hostInfo" hidden></div>
+    <div class="sv-app__body">
+      <aside class="sv-sidebar">
+        <div class="sv-sidebar__group">
+          <button class="sv-button sv-button_primary sv-button_block" type="button" data-sv="hostBtn"></button>
+          <div class="sv-sidebar__info" data-sv="hostInfo" hidden></div>
+        </div>
 
-        <label class="field-label" for="ipInput">IP-адрес</label>
-        <input class="input" id="ipInput" type="text" placeholder="192.168.1.42" spellcheck="false" autocomplete="off">
-        <button class="btn btn--primary btn--block" id="connectBtn">Подключиться</button>
-        <div class="error" id="connError" hidden></div>
+        <div class="sv-sidebar__group">
+          <label class="sv-field">
+            <span class="sv-field__label">IP-адрес</span>
+            <input class="sv-input" type="text" data-sv="ipInput" placeholder="192.168.1.42" spellcheck="false" autocomplete="off" maxlength="64">
+          </label>
+          <button class="sv-button sv-button_primary sv-button_block" type="button" data-sv="connectBtn">Подключиться</button>
+          <div class="sv-sidebar__error" data-sv="connError" role="alert" hidden></div>
+        </div>
 
-        <div class="divider"></div>
-        <div class="peers-title" id="peersTitle">Участники (0)</div>
-        <ul class="peers" id="peers"></ul>
+        <div class="sv-sidebar__peers">
+          <div class="sv-sidebar__title" data-sv="peersTitle">Участники (0)</div>
+          <ul class="sv-peers" data-sv="peers"></ul>
+        </div>
       </aside>
 
-      <main class="content">
-        <section class="view" id="chatView">
-          <h1 class="view__title">Чат звонка</h1>
-          <p class="view__sub">Сообщения и файлы доступны только во время звонка</p>
-          <div class="messages" id="messages">
-            <div class="empty" id="chatEmpty">Здесь появятся сообщения и файлы этого звонка</div>
+      <main class="sv-app__content">
+        <section class="sv-view" data-sv="chatView">
+          <header class="sv-view__head">
+            <h1 class="sv-view__title">Чат звонка</h1>
+            <p class="sv-view__sub">Сообщения и файлы доступны только во время звонка</p>
+          </header>
+          <div class="sv-messages" data-sv="messages" aria-live="polite">
+            <div class="sv-messages__empty" data-sv="chatEmpty">Здесь появятся сообщения и файлы этого звонка</div>
           </div>
-          <form class="composer" id="composer">
-            <button type="button" class="composer__attach" id="attachBtn" title="Отправить файл"><svg><use href="#i-clip"/></svg></button>
-            <input type="file" id="fileInput" multiple hidden>
-            <input class="composer__input" id="msgInput" type="text" placeholder="Сообщение" maxlength="2000" autocomplete="off">
-            <button type="submit" class="composer__send" title="Отправить"><svg><use href="#i-send"/></svg></button>
+          <form class="sv-composer" data-sv="composer" autocomplete="off">
+            <button type="button" class="sv-composer__button" data-sv="attachBtn" aria-label="Отправить файл" title="Отправить файл"><svg class="sv-icon"><use href="#i-clip"/></svg></button>
+            <input type="file" data-sv="fileInput" multiple hidden>
+            <input class="sv-composer__input" type="text" data-sv="msgInput" placeholder="Сообщение" maxlength="2000" aria-label="Сообщение">
+            <button type="submit" class="sv-composer__button sv-composer__button_send" aria-label="Отправить" title="Отправить"><svg class="sv-icon"><use href="#i-send"/></svg></button>
           </form>
         </section>
 
-        <section class="view" id="settingsView" hidden>
-          <h1 class="view__title">Настройки</h1>
-          <div class="settings">
-            <div class="row">
-              <span class="row__label">Ник</span>
-              <input class="input" id="nickInput" type="text" maxlength="32" placeholder="Ваш ник">
-            </div>
-            <div class="row">
-              <span class="row__label">Аватар</span>
-              <div class="avatar-edit">
-                <div class="avatar-slot avatar-slot--big" id="avatarPreview"></div>
-                <button class="btn btn--ghost" id="avatarBtn">Изменить…</button>
-                <button class="btn btn--ghost" id="avatarClear">Убрать</button>
-                <input type="file" id="avatarInput" accept="image/*" hidden>
+        <section class="sv-view" data-sv="settingsView" hidden>
+          <header class="sv-view__head">
+            <h1 class="sv-view__title">Настройки</h1>
+          </header>
+          <div class="sv-settings">
+            <section class="sv-settings__section">
+              <label class="sv-row">
+                <span class="sv-row__label">Ник</span>
+                <input class="sv-input" type="text" data-sv="nickInput" maxlength="32" placeholder="Ваш ник">
+              </label>
+              <div class="sv-row">
+                <span class="sv-row__label">Аватар</span>
+                <div class="sv-row__control">
+                  <div class="sv-avatar sv-avatar_big" data-sv="avatarPreview"></div>
+                  <button class="sv-button sv-button_ghost" type="button" data-sv="avatarBtn">Изменить…</button>
+                  <button class="sv-button sv-button_ghost" type="button" data-sv="avatarClear">Убрать</button>
+                  <input type="file" data-sv="avatarInput" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+                </div>
               </div>
-            </div>
+              <p class="sv-settings__error" data-sv="avatarError" role="alert" hidden></p>
+            </section>
 
-            <div class="sep"></div>
-            <div class="group-title">Активация голоса</div>
-            <label class="radio"><input type="radio" name="mode" value="ptt"><span class="radio__dot"></span>По кнопке</label>
-            <div class="sub" id="pttBox">
-              <span class="row__label row__label--small">Клавиша</span>
-              <button class="btn btn--ghost key" id="pttKeyBtn">Не назначена</button>
-              <span class="hint" id="pttHint"></span>
-            </div>
-            <label class="radio"><input type="radio" name="mode" value="vad"><span class="radio__dot"></span>По голосу</label>
-            <div class="sub" id="vadBox">
-              <span class="row__label row__label--small">Порог</span>
-              <div class="meter">
-                <div class="meter__bar" id="meterBar"></div>
-                <input class="meter__range" id="vadRange" type="range" min="-80" max="-10" step="1">
+            <section class="sv-settings__section">
+              <h2 class="sv-settings__title">Активация голоса</h2>
+              <label class="sv-radio"><input class="sv-radio__input" type="radio" name="mode" value="ptt"><span class="sv-radio__dot"></span>По кнопке</label>
+              <div class="sv-row sv-row_sub" data-sv="pttBox">
+                <span class="sv-row__label sv-row__label_small">Клавиша</span>
+                <button class="sv-button sv-button_ghost sv-button_key" type="button" data-sv="pttKeyBtn">Не назначена</button>
+                <span class="sv-hint" data-sv="pttHint"></span>
               </div>
-              <span class="hint" id="vadValue"></span>
-            </div>
-
-            <div class="row row--toggle">
-              <span class="row__label row__label--strong">Шумоподавление</span>
-              <label class="toggle"><input type="checkbox" id="nsToggle"><span class="toggle__track"></span></label>
-            </div>
-
-            <div class="sep"></div>
-            <div class="group-title">Устройства</div>
-            <div class="row">
-              <span class="row__label">Ввод</span>
-              <select class="input" id="inputSelect"></select>
-            </div>
-            <div class="row">
-              <span class="row__label">Вывод</span>
-              <select class="input" id="outputSelect"></select>
-            </div>
-            <div class="row">
-              <span class="row__label">Микрофон</span>
-              <input class="range" id="inGainRange" type="range" min="0" max="200" step="1">
-              <span class="hint hint--num" id="inGainValue"></span>
-            </div>
-            <div class="row">
-              <span class="row__label">Громкость</span>
-              <input class="range" id="outVolRange" type="range" min="0" max="200" step="1">
-              <span class="hint hint--num" id="outVolValue"></span>
-            </div>
-
-            <div class="sep"></div>
-            <div class="group-title">Интерфейс</div>
-            <div class="row row--toggle">
-              <span class="row__label row__label--strong">Оверлей поверх игр</span>
-              <label class="toggle"><input type="checkbox" id="overlayToggle"><span class="toggle__track"></span></label>
-            </div>
-            <div class="row">
-              <span class="row__label">Тема</span>
-              <div class="seg">
-                <label><input type="radio" name="theme" value="dark"><span>Тёмная</span></label>
-                <label><input type="radio" name="theme" value="light"><span>Светлая</span></label>
+              <label class="sv-radio"><input class="sv-radio__input" type="radio" name="mode" value="vad"><span class="sv-radio__dot"></span>По голосу</label>
+              <div class="sv-row sv-row_sub" data-sv="vadBox">
+                <span class="sv-row__label sv-row__label_small">Порог</span>
+                <div class="sv-meter" data-sv="meter">
+                  <span class="sv-meter__bar"></span>
+                  <input class="sv-meter__range" type="range" min="-80" max="-10" step="1" data-sv="vadRange" aria-label="Порог срабатывания">
+                </div>
+                <span class="sv-hint sv-hint_num" data-sv="vadValue"></span>
               </div>
-            </div>
+              <label class="sv-row sv-row_toggle">
+                <span class="sv-row__label sv-row__label_wide">Шумоподавление</span>
+                <span class="sv-toggle"><input class="sv-toggle__input" type="checkbox" data-sv="nsToggle"><span class="sv-toggle__track"></span></span>
+              </label>
+            </section>
 
-            <div class="sep"></div>
-            <div class="group-title">Сервер</div>
-            <div class="row">
-              <span class="row__label">Порт</span>
-              <input class="input input--short" id="portInput" type="number" min="1024" max="65535">
-            </div>
-            <div class="row">
-              <span class="row__label">Пароль</span>
-              <input class="input" id="passInput" type="password" placeholder="Необязательно" autocomplete="off">
-            </div>
-            <p class="note">Пароль общий: им защищается ваш сервер и он же отправляется при подключении к чужому. Друзьям нужен открытый на роутере TCP-порт и ваш внешний IP.</p>
+            <section class="sv-settings__section">
+              <h2 class="sv-settings__title">Устройства</h2>
+              <label class="sv-row">
+                <span class="sv-row__label">Ввод</span>
+                <select class="sv-input" data-sv="inputSelect"></select>
+              </label>
+              <label class="sv-row">
+                <span class="sv-row__label">Вывод</span>
+                <select class="sv-input" data-sv="outputSelect"></select>
+              </label>
+              <label class="sv-row">
+                <span class="sv-row__label">Микрофон</span>
+                <input class="sv-range" type="range" min="0" max="200" step="1" data-sv="inGainRange">
+                <span class="sv-hint sv-hint_num" data-sv="inGainValue"></span>
+              </label>
+              <label class="sv-row">
+                <span class="sv-row__label">Громкость</span>
+                <input class="sv-range" type="range" min="0" max="200" step="1" data-sv="outVolRange">
+                <span class="sv-hint sv-hint_num" data-sv="outVolValue"></span>
+              </label>
+            </section>
+
+            <section class="sv-settings__section">
+              <h2 class="sv-settings__title">Интерфейс</h2>
+              <label class="sv-row sv-row_toggle">
+                <span class="sv-row__label sv-row__label_wide">Оверлей поверх игр</span>
+                <span class="sv-toggle"><input class="sv-toggle__input" type="checkbox" data-sv="overlayToggle"><span class="sv-toggle__track"></span></span>
+              </label>
+              <div class="sv-row">
+                <span class="sv-row__label">Тема</span>
+                <div class="sv-seg" role="radiogroup" aria-label="Тема">
+                  <label class="sv-seg__item"><input class="sv-seg__input" type="radio" name="theme" value="dark"><span class="sv-seg__label">Тёмная</span></label>
+                  <label class="sv-seg__item"><input class="sv-seg__input" type="radio" name="theme" value="light"><span class="sv-seg__label">Светлая</span></label>
+                </div>
+              </div>
+            </section>
+
+            <section class="sv-settings__section">
+              <h2 class="sv-settings__title">Сервер</h2>
+              <label class="sv-row">
+                <span class="sv-row__label">Порт</span>
+                <input class="sv-input sv-input_short" type="number" min="1024" max="65535" data-sv="portInput">
+              </label>
+              <label class="sv-row">
+                <span class="sv-row__label">Пароль</span>
+                <input class="sv-input" type="password" data-sv="passInput" placeholder="Необязательно" autocomplete="off" maxlength="128">
+              </label>
+              <p class="sv-settings__note">Пароль общий: им защищается ваш сервер, и он же отправляется при подключении к чужому. Для друзей из интернета откройте на роутере TCP-порт и сообщите им внешний IP.</p>
+            </section>
           </div>
         </section>
       </main>
     </div>
 
-    <footer class="bar">
-      <div class="bar__status">
-        <span class="signal" id="signal"><i></i><i></i><i></i><i></i></span>
-        <span id="statusText">Не подключено</span>
+    <footer class="sv-bar">
+      <div class="sv-bar__status">
+        <span class="sv-signal" data-sv="signal" data-level="0"><i class="sv-signal__bar"></i><i class="sv-signal__bar"></i><i class="sv-signal__bar"></i><i class="sv-signal__bar"></i></span>
+        <span data-sv="statusText">Не подключено</span>
       </div>
-      <div class="bar__controls">
-        <button class="ctl ctl--accent" id="micBtn" title="Микрофон"><svg><use href="#i-mic"/></svg></button>
-        <button class="ctl" id="headBtn" title="Звук"><svg><use href="#i-head"/></svg></button>
-        <span class="bar__sep"></span>
-        <button class="ctl" id="settingsBtn" title="Настройки"><svg><use href="#i-gear"/></svg></button>
-        <button class="ctl ctl--danger" id="hangupBtn" title="Завершить звонок"><svg><use href="#i-hangup"/></svg></button>
+      <div class="sv-bar__controls">
+        <button class="sv-control" type="button" data-sv="micBtn"></button>
+        <button class="sv-control" type="button" data-sv="headBtn"></button>
+        <span class="sv-bar__sep"></span>
+        <button class="sv-control" type="button" data-sv="settingsBtn"></button>
+        <button class="sv-control sv-control_danger" type="button" data-sv="hangupBtn" aria-label="Завершить звонок" title="Завершить звонок"><svg class="sv-icon"><use href="#i-hangup"/></svg></button>
       </div>
     </footer>
   </div>

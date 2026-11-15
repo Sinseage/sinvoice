@@ -9,7 +9,7 @@
 
 (() => {
   const api = window.sinvoice;
-  const $ = (id) => document.getElementById(id);
+  const $ = (name) => document.querySelector(`[data-sv="${name}"]`);
 
   const STORE_KEY = 'sinvoice.settings';
   const DEFAULT_PORT = 47800;
@@ -18,6 +18,11 @@
   const FILE_CHUNK = 64 * 1024;
   const FILE_WINDOW = 16;
   const MAX_FILE = 2 * 1024 * 1024 * 1024;
+  const MAX_INCOMING = 2 * 1024 * 1024 * 1024;
+  const MAX_MESSAGES = 500;
+  const MAX_AVATAR_FILE = 10 * 1024 * 1024;
+  const MAX_AVATAR_PX = 8000;
+  const AVATAR_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
   const T_AUDIO = 1;
   const T_FILE = 2;
 
@@ -65,6 +70,7 @@
     outgoing: new Map(),
     incoming: new Map(),
     lastSpeaking: '',
+    overlaySig: '',
     level: 0,
   };
 
@@ -77,11 +83,21 @@
    * @returns {object}
    */
   function loadSettings() {
-    try {
-      return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORE_KEY) || '{}') };
-    } catch (e) {
-      return { ...DEFAULTS };
+    let raw = {};
+    try { raw = JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; } catch (e) { raw = {}; }
+    const out = { ...DEFAULTS };
+    for (const key of Object.keys(DEFAULTS)) {
+      if (key in raw && (typeof raw[key] === typeof DEFAULTS[key] || DEFAULTS[key] === null)) out[key] = raw[key];
     }
+    out.avatar = typeof out.avatar === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(out.avatar) ? out.avatar : '';
+    out.mode = out.mode === 'ptt' ? 'ptt' : 'vad';
+    out.theme = out.theme === 'light' ? 'light' : 'dark';
+    out.vadThreshold = Math.min(-10, Math.max(-80, Number(out.vadThreshold) || DEFAULTS.vadThreshold));
+    out.inputGain = Math.min(2, Math.max(0, Number(out.inputGain)));
+    out.outputVolume = Math.min(2, Math.max(0, Number(out.outputVolume)));
+    out.port = out.port >= 1024 && out.port <= 65535 ? Math.floor(out.port) : DEFAULT_PORT;
+    if (out.ptt && (typeof out.ptt !== 'object' || !Number.isInteger(out.ptt.code))) out.ptt = null;
+    return out;
   }
 
   /**
@@ -162,7 +178,8 @@
   function icon(name, cls) {
     const ns = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(ns, 'svg');
-    if (cls) svg.classList.add(cls);
+    svg.setAttribute('class', cls ? `sv-icon ${cls}` : 'sv-icon');
+    svg.setAttribute('aria-hidden', 'true');
     const use = document.createElementNS(ns, 'use');
     use.setAttribute('href', `#i-${name}`);
     svg.appendChild(use);
@@ -188,16 +205,63 @@
    */
   function fillAvatar(slot, avatar, nick) {
     slot.textContent = '';
-    if (avatar) {
-      const img = el('img');
-      img.src = avatar;
+    const safe = cleanAvatar(avatar);
+    slot.classList.toggle('sv-avatar_image', !!safe);
+    if (safe) {
+      const img = el('img', 'sv-avatar__image');
+      img.src = safe;
       img.alt = '';
       slot.appendChild(img);
-      slot.style.background = 'transparent';
+      slot.style.removeProperty('background-color');
     } else {
-      slot.textContent = (nick || '?').trim().charAt(0).toUpperCase() || '?';
-      slot.style.background = hue(nick || '?');
+      slot.textContent = Array.from((nick || '?').trim())[0] || '?';
+      slot.style.setProperty('background-color', hue(nick || '?'));
     }
+  }
+
+  /**
+   * Пропускает только аватары PNG, JPEG и WebP в base64.
+   * @param {*} value Значение
+   * @returns {string} Аватар или пустая строка
+   */
+  function cleanAvatar(value) {
+    return typeof value === 'string' && value.length < 200000 && AVATAR_RE.test(value) ? value : '';
+  }
+
+  /**
+   * Строка без управляющих символов и ограниченной длины.
+   * @param {*} value Значение
+   * @param {number} max Наибольшая длина
+   * @returns {string}
+   */
+  function cleanText(value, max) {
+    return String(value == null ? '' : value).replace(/[\p{Cc}\p{Cf}]/gu, '').slice(0, max);
+  }
+
+  /**
+   * Безопасное имя файла для сохранения.
+   * @param {*} value Имя от отправителя
+   * @returns {string}
+   */
+  function cleanFileName(value) {
+    const name = cleanText(value, 200).replace(/[\\/:*?"<>|]/g, '_').replace(/^[\s.]+|[\s.]+$/g, '');
+    return /^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i.test(name) ? `_${name}` : (name || 'file');
+  }
+
+  /**
+   * Приводит данные участника от сервера к ожидаемому виду.
+   * @param {object} p Участник
+   * @returns {{id:number, nick:string, avatar:string, muted:boolean, deafened:boolean, lastAudio:number}}
+   */
+  function normPeer(p) {
+    return {
+      id: Number(p && p.id) | 0,
+      nick: cleanText(p && p.nick, 32) || 'Гость',
+      avatar: cleanAvatar(p && p.avatar),
+      muted: !!(p && p.muted),
+      deafened: !!(p && p.deafened),
+      lastAudio: 0,
+    };
   }
 
   /**
@@ -336,7 +400,7 @@
         st.connecting = false;
         st.myId = m.id;
         st.peers.clear();
-        for (const p of m.peers) st.peers.set(p.id, { ...p, lastAudio: 0 });
+        for (const p of Array.isArray(m.peers) ? m.peers : []) st.peers.set(Number(p.id) | 0, normPeer(p));
         startPing();
         if (!engine.running) startAudio();
         addSystem('Вы вошли в звонок');
@@ -346,11 +410,13 @@
         showError(m.text || 'Ошибка сервера');
         st.leaving = true;
         break;
-      case 'join':
-        st.peers.set(m.peer.id, { ...m.peer, lastAudio: 0 });
-        addSystem(`${m.peer.nick} подключился`);
+      case 'join': {
+        const peer = normPeer(m.peer);
+        st.peers.set(peer.id, peer);
+        addSystem(`${peer.nick} подключился`);
         renderAll();
         break;
+      }
       case 'leave': {
         const p = st.peers.get(m.id);
         st.peers.delete(m.id);
@@ -369,7 +435,13 @@
       }
       case 'profile': {
         const p = st.peers.get(m.peer.id);
-        if (p) { p.nick = m.peer.nick; p.avatar = m.peer.avatar; renderPeers(); }
+        if (p) {
+          const n = normPeer(m.peer);
+          p.nick = n.nick;
+          p.avatar = n.avatar;
+          renderPeers();
+          renderOverlayPeers();
+        }
         break;
       }
       case 'pong':
@@ -377,7 +449,13 @@
         renderStatus();
         break;
       case 'chat':
-        addChat(m.id, m.text, m.ts);
+        addChat(Number(m.id) | 0, String(m.text == null ? '' : m.text).replace(/[\p{Cc}\p{Cf}]/gu, (ch) => (ch === '\n' ? ch : '')).slice(0, 2000), Number(m.ts) || Date.now());
+        break;
+      case 'notice':
+        addSystem(cleanText(m.text, 200));
+        break;
+      case 'file-reject':
+        onFileReject(m);
         break;
       case 'file-offer':
         onFileOffer(m);
@@ -552,8 +630,8 @@
    * @returns {HTMLElement}
    */
   function makeEmpty() {
-    const e = el('div', 'empty', 'Здесь появятся сообщения и файлы этого звонка');
-    e.id = 'chatEmpty';
+    const e = el('div', 'sv-messages__empty', 'Здесь появятся сообщения и файлы этого звонка');
+    e.dataset.sv = 'chatEmpty';
     return e;
   }
 
@@ -566,6 +644,10 @@
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     $('chatEmpty').hidden = true;
     box.appendChild(node);
+    while (box.children.length > MAX_MESSAGES + 1) {
+      const first = box.children[0] === $('chatEmpty') ? box.children[1] : box.children[0];
+      first.remove();
+    }
     if (atBottom) box.scrollTop = box.scrollHeight;
   }
 
@@ -574,7 +656,7 @@
    * @param {string} text Текст
    */
   function addSystem(text) {
-    pushMessage(el('div', 'msg msg--sys', text));
+    pushMessage(el('div', 'sv-message sv-message_system', text));
   }
 
   /**
@@ -585,12 +667,12 @@
    */
   function messageShell(id, ts) {
     const p = st.peers.get(id) || { nick: '???', avatar: '' };
-    const root = el('div', 'msg');
-    const av = el('div', 'avatar-slot');
+    const root = el('div', 'sv-message');
+    const av = el('div', 'sv-avatar');
     fillAvatar(av, p.avatar, p.nick);
-    const body = el('div', 'msg__body');
-    const head = el('div', 'msg__head');
-    head.append(el('span', 'msg__nick', p.nick), el('span', 'msg__time', fmtTime(ts)));
+    const body = el('div', 'sv-message__body');
+    const head = el('div', 'sv-message__head');
+    head.append(el('span', 'sv-message__nick', p.nick), el('span', 'sv-message__time', fmtTime(ts)));
     body.appendChild(head);
     root.append(av, body);
     return { root, body };
@@ -604,7 +686,7 @@
    */
   function addChat(id, text, ts) {
     const { root, body } = messageShell(id, ts);
-    body.appendChild(el('div', 'msg__text', text));
+    body.appendChild(el('div', 'sv-message__text', text));
     pushMessage(root);
   }
 
@@ -619,18 +701,18 @@
    */
   function makeFileCard(key, from, name) {
     const { root, body } = messageShell(from, Date.now());
-    const card = el('div', 'filecard');
-    const ic = el('div', 'filecard__icon');
+    const card = el('div', 'sv-file');
+    const ic = el('div', 'sv-file__icon');
     ic.appendChild(icon('file'));
-    const info = el('div', 'filecard__info');
-    const nm = el('div', 'filecard__name', name);
+    const info = el('div', 'sv-file__info');
+    const nm = el('div', 'sv-file__name', name);
     nm.title = name;
-    const state = el('div', 'filecard__state');
-    const prog = el('div', 'progress');
-    const bar = el('i');
+    const state = el('div', 'sv-file__state');
+    const prog = el('div', 'sv-file__progress');
+    const bar = el('i', 'sv-file__progress-bar');
     prog.appendChild(bar);
     info.append(nm, state, prog);
-    const act = el('button', 'filecard__act');
+    const act = el('button', 'sv-file__action');
     act.type = 'button';
     act.appendChild(icon('x'));
     act.title = 'Отменить';
@@ -650,7 +732,7 @@
     if (!f || !f.ui) return;
     const pct = f.size ? Math.min(100, Math.floor((f.done / f.size) * 100)) : 100;
     const ui = f.ui;
-    ui.bar.style.width = `${pct}%`;
+    ui.bar.style.transform = `scaleX(${pct / 100})`;
     const set = (text, showProg, act) => {
       ui.state.textContent = text;
       ui.prog.hidden = !showProg;
@@ -658,7 +740,8 @@
       if (act) {
         ui.act.textContent = '';
         ui.act.appendChild(icon(act));
-        ui.act.className = act === 'down' ? 'filecard__act filecard__act--save' : 'filecard__act';
+        ui.act.className = act === 'down' ? 'sv-file__action sv-file__action_save' : 'sv-file__action';
+        ui.act.setAttribute('aria-label', act === 'down' ? 'Сохранить' : 'Отменить');
         ui.act.title = act === 'down' ? 'Сохранить' : 'Отменить';
       }
     };
@@ -669,6 +752,8 @@
       case 'ready': set(`Получен · ${fmtSize(f.size)} · можно сохранить до конца звонка`, false, 'down'); break;
       case 'saved': set(`Сохранён · ${fmtSize(f.size)}`, false, 'down'); break;
       case 'cancel': set('Передача отменена', false, null); break;
+      case 'skip': set(`Пропущен · ${fmtSize(f.size)} · слишком большой объём файлов за звонок`, false, null); break;
+      case 'reject': set(f.reason || 'Сервер не принял файл', false, null); break;
       default: break;
     }
   }
@@ -774,10 +859,32 @@
    * @param {object} m Сообщение
    */
   function onFileOffer(m) {
-    const key = `${m.id}:${m.fid}`;
-    const f = { from: m.id, fid: m.fid, name: m.name, size: m.size, done: 0, chunks: [], state: 'recv', url: '', ui: null };
+    const from = Number(m.id) | 0;
+    const fid = Number(m.fid) >>> 0;
+    const size = Number(m.size);
+    const key = `${from}:${fid}`;
+    if (!fid || st.incoming.has(key) || !Number.isSafeInteger(size) || size <= 0) return;
+    const name = cleanFileName(m.name);
+    let used = 0;
+    for (const x of st.incoming.values()) if (x.state === 'recv' || x.state === 'ready' || x.state === 'saved') used += x.size;
+    const f = { from, fid, name, size, done: 0, chunks: [], state: 'recv', url: '', ui: null };
+    if (size > MAX_FILE || used + size > MAX_INCOMING) f.state = 'skip';
     st.incoming.set(key, f);
-    f.ui = makeFileCard(key, m.id, m.name);
+    f.ui = makeFileCard(key, from, name);
+    updateFileCard(key);
+  }
+
+  /**
+   * Сервер отказал в отправке файла.
+   * @param {{fid:number, text:string}} m Сообщение
+   */
+  function onFileReject(m) {
+    const key = `me:${Number(m.fid) >>> 0}`;
+    const o = st.outgoing.get(key);
+    if (!o) return;
+    o.cancelled = true;
+    o.state = 'reject';
+    o.reason = cleanText(m.text, 200);
     updateFileCard(key);
   }
 
@@ -791,8 +898,14 @@
     const key = `${from}:${fid}`;
     const f = st.incoming.get(key);
     if (!f || f.state !== 'recv') return;
-    f.chunks.push(data);
     f.done += data.length;
+    if (f.done > f.size) {
+      f.state = 'cancel';
+      f.chunks = [];
+      updateFileCard(key);
+      return;
+    }
+    f.chunks.push(data);
     if (!f.lastPaint || performance.now() - f.lastPaint > 150) {
       f.lastPaint = performance.now();
       updateFileCard(key);
@@ -847,17 +960,17 @@
     const host = $('hostBtn');
     host.textContent = '';
     host.append(icon(st.hosting ? 'stop' : 'plus'), el('span', '', st.hosting ? 'Остановить сервер' : 'Поднять сервер'));
-    host.className = st.hosting ? 'btn btn--danger btn--block' : 'btn btn--primary btn--block';
+    host.className = st.hosting ? 'sv-button sv-button_danger sv-button_block' : 'sv-button sv-button_primary sv-button_block';
     host.disabled = !st.hosting && (st.connected || st.connecting);
     $('hostInfo').hidden = !st.hosting;
 
     const conn = $('connectBtn');
     const inCall = st.connected || st.connecting;
     conn.textContent = st.connecting ? 'Подключение…' : (st.connected ? 'Отключиться' : 'Подключиться');
-    conn.className = st.connected ? 'btn btn--ghost btn--block' : 'btn btn--primary btn--block';
+    conn.className = st.connected ? 'sv-button sv-button_ghost sv-button_block' : 'sv-button sv-button_primary sv-button_block';
     conn.disabled = st.hosting || st.connecting;
     $('ipInput').disabled = inCall || st.hosting;
-    $('composer').classList.toggle('composer--disabled', !st.connected);
+    $('composer').classList.toggle('sv-composer_disabled', !st.connected);
   }
 
   /**
@@ -869,19 +982,19 @@
     const peers = sortedPeers();
     $('peersTitle').textContent = `Участники (${peers.length})`;
     for (const p of peers) {
-      const li = el('li', 'peer');
+      const li = el('li', 'sv-peer');
       li.dataset.id = String(p.id);
-      if (p.id === st.myId) li.classList.add('peer--me');
-      const av = el('div', 'avatar-slot');
+      if (p.id === st.myId) li.classList.add('sv-peer_me');
+      const av = el('div', 'sv-avatar');
       fillAvatar(av, p.avatar, p.nick);
-      const name = el('span', 'peer__name', p.nick);
-      const icons = el('span', 'peer__icons');
+      const name = el('span', 'sv-peer__name', p.nick);
+      const icons = el('span', 'sv-peer__icons');
       const muted = p.id === st.myId ? (st.muted || st.deafened) : p.muted;
       const deaf = p.id === st.myId ? st.deafened : p.deafened;
       if (deaf) icons.appendChild(icon('head-off', 'off'));
       icons.appendChild(muted ? icon('mic-off', 'off') : icon('mic'));
-      const eq = el('span', 'eq');
-      eq.append(el('i'), el('i'), el('i'), el('i'));
+      const eq = el('span', 'sv-peer__eq');
+      for (let i = 0; i < 4; i++) eq.appendChild(el('i', 'sv-peer__eq-bar'));
       icons.appendChild(eq);
       li.append(av, name, icons);
       list.appendChild(li);
@@ -923,20 +1036,25 @@
   function renderControls() {
     const mic = $('micBtn');
     const micOff = st.muted || st.deafened;
-    mic.className = micOff ? 'ctl ctl--off' : 'ctl ctl--accent';
+    mic.className = micOff ? 'sv-control sv-control_off' : 'sv-control sv-control_accent';
     mic.textContent = '';
     mic.appendChild(icon(micOff ? 'mic-off' : 'mic'));
     mic.title = micOff ? 'Включить микрофон' : 'Выключить микрофон';
+    mic.setAttribute('aria-label', mic.title);
+    mic.setAttribute('aria-pressed', String(micOff));
 
     const head = $('headBtn');
-    head.className = st.deafened ? 'ctl ctl--off' : 'ctl';
+    head.className = st.deafened ? 'sv-control sv-control_off' : 'sv-control';
     head.textContent = '';
     head.appendChild(icon(st.deafened ? 'head-off' : 'head'));
     head.title = st.deafened ? 'Включить звук' : 'Выключить звук';
+    head.setAttribute('aria-label', head.title);
+    head.setAttribute('aria-pressed', String(st.deafened));
 
     const gear = $('settingsBtn');
-    gear.classList.toggle('ctl--active', st.view === 'settings');
+    gear.classList.toggle('sv-control_active', st.view === 'settings');
     gear.title = st.view === 'settings' ? 'Вернуться в чат' : 'Настройки';
+    gear.setAttribute('aria-label', gear.title);
     gear.textContent = '';
     gear.appendChild(icon(st.view === 'settings' ? 'chat' : 'gear'));
 
@@ -957,13 +1075,13 @@
     if (sig !== st.lastSpeaking) {
       st.lastSpeaking = sig;
       for (const li of $('peers').children) {
-        li.classList.toggle('speaking', ids.includes(Number(li.dataset.id)));
+        li.classList.toggle('sv-peer_speaking', ids.includes(Number(li.dataset.id)));
       }
       api.overlaySpeaking(ids);
     }
     if (st.view === 'settings') {
-      const pct = Math.max(0, Math.min(100, ((st.level + 80) / 70) * 100));
-      $('meterBar').style.setProperty('--lvl', engine.running ? `${pct}%` : '0%');
+      const level = Math.max(0, Math.min(1, (st.level + 80) / 70));
+      $('meter').style.setProperty('--sv-level', engine.running ? level.toFixed(3) : '0');
     }
   }
 
@@ -971,7 +1089,7 @@
    * Передаёт список участников в оверлей.
    */
   function renderOverlayPeers() {
-    api.overlayPeers({
+    const data = {
       visible: settings.overlay && st.connected,
       peers: sortedPeers().map((p) => ({
         id: p.id,
@@ -980,7 +1098,11 @@
         muted: p.id === st.myId ? (st.muted || st.deafened) : p.muted,
         color: hue(p.nick || '?'),
       })),
-    });
+    };
+    const sig = JSON.stringify(data);
+    if (sig === st.overlaySig) return;
+    st.overlaySig = sig;
+    api.overlayPeers(data);
     st.lastSpeaking = '';
   }
 
@@ -1068,7 +1190,7 @@
    */
   function renderPttKey() {
     const b = $('pttKeyBtn');
-    b.classList.toggle('key--wait', st.capturingKey);
+    b.classList.toggle('sv-button_waiting', st.capturingKey);
     b.textContent = st.capturingKey ? 'Нажмите клавишу…' : (settings.ptt ? settings.ptt.name : 'Не назначена');
     $('pttHint').textContent = st.pttAvailable ? (st.capturingKey ? 'Esc — отмена' : '') : 'Глобальная клавиша недоступна';
   }
@@ -1077,8 +1199,8 @@
    * Затемняет параметры неактивного режима.
    */
   function renderModeBoxes() {
-    $('pttBox').classList.toggle('sub--off', settings.mode !== 'ptt');
-    $('vadBox').classList.toggle('sub--off', settings.mode !== 'vad');
+    $('pttBox').classList.toggle('sv-row_off', settings.mode !== 'ptt');
+    $('vadBox').classList.toggle('sv-row_off', settings.mode !== 'vad');
   }
 
   /**
@@ -1092,15 +1214,21 @@
   }
 
   /**
-   * Уменьшает картинку до квадрата 128×128.
+   * Уменьшает картинку до квадрата 128×128. Тип определяется декодированием, а не по имени файла.
    * @param {File} file Изображение
    * @returns {Promise<string>} Data URL
    */
   function makeAvatar(file) {
     return new Promise((resolve, reject) => {
+      if (file.size > MAX_AVATAR_FILE) { reject(new Error('Картинка больше 10 МБ')); return; }
       const url = URL.createObjectURL(file);
       const img = new Image();
       img.onload = () => {
+        if (!img.width || !img.height || img.width > MAX_AVATAR_PX || img.height > MAX_AVATAR_PX) {
+          URL.revokeObjectURL(url);
+          reject(new Error('Слишком большое разрешение картинки'));
+          return;
+        }
         const size = 128;
         const c = document.createElement('canvas');
         c.width = size;
@@ -1108,9 +1236,10 @@
         const s = Math.min(img.width, img.height);
         c.getContext('2d').drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
         URL.revokeObjectURL(url);
-        resolve(c.toDataURL('image/png'));
+        const webp = c.toDataURL('image/webp', 0.85);
+        resolve(webp.startsWith('data:image/webp') ? webp : c.toDataURL('image/png'));
       };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('bad image')); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Это не картинка')); };
       img.src = url;
     });
   }
@@ -1198,7 +1327,11 @@
         saveSettings();
         fillAvatar($('avatarPreview'), settings.avatar, myNick());
         pushProfile();
-      } catch (err) { /* не картинка — игнорируем */ }
+        $('avatarError').hidden = true;
+      } catch (err) {
+        $('avatarError').textContent = err && err.message ? err.message : 'Не удалось загрузить картинку';
+        $('avatarError').hidden = false;
+      }
     });
     $('avatarClear').addEventListener('click', () => {
       settings.avatar = '';

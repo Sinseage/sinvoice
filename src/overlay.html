@@ -2,12 +2,12 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:; base-uri 'none'">
   <title>SINVoice Overlay</title>
   <link rel="stylesheet" href="overlay.css">
 </head>
-<body>
-  <ul class="ov" id="list"></ul>
+<body class="sv-overlay">
+  <ul class="sv-overlay__list" data-sv="list"></ul>
   <script src="overlay.js"></script>
 </body>
 </html>
