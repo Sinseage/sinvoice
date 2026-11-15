@@ -1,6 +1,6 @@
 # SINVoice — устройство
 
-Версия 1.2.0 · Автор: Дмитрий Собенин (Sinseage)
+Версия 1.2.1 · Автор: Дмитрий Собенин (Sinseage)
 
 ## Процессы
 
@@ -82,4 +82,4 @@ JSON-сообщения сервера: `welcome`, `join`, `leave`, `state`, `pr
 
 ## Сборка
 
-`npm install`, затем `npm run dist` — portable exe в `dist/`. В GitHub Actions сборка запускается публикацией релиза (`.github/workflows/build.yml`), версия берётся из тега. `cleanup.yml` раз в сутки удаляет артефакты Actions.
+`npm install`, затем `npm run dist` — portable exe в `dist/`. В GitHub Actions сборка запускается вручную (`.github/workflows/build.yml`, Run workflow) с номером версии: exe собирается, релиз создаётся черновиком с файлом и затем публикуется — это совместимо с неизменяемыми релизами. `cleanup.yml` раз в сутки удаляет артефакты Actions.
