@@ -25,6 +25,17 @@ contextBridge.exposeInMainWorld('sinvoice', {
   startServer: (opts) => ipcRenderer.invoke('server:start', opts),
   stopServer: () => ipcRenderer.invoke('server:stop'),
 
+  linkPreview: (url) => ipcRenderer.invoke('link:preview', url),
+  publicIp: () => ipcRenderer.invoke('net:publicIp'),
+  appInfo: () => ipcRenderer.invoke('app:info'),
+  checkUpdate: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  onUpdateProgress: (cb) => on('update:progress', cb),
+  openReleases: () => ipcRenderer.send('app:openReleases'),
+
+  screenSources: () => ipcRenderer.invoke('screen:sources'),
+  screenSelect: (id) => ipcRenderer.send('screen:select', id),
+
   pttAvailable: () => ipcRenderer.invoke('ptt:available'),
   setPtt: (binding) => ipcRenderer.send('ptt:set', binding),
   capturePtt: (on) => ipcRenderer.send('ptt:capture', on),

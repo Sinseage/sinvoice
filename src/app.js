@@ -25,6 +25,9 @@
   const AVATAR_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
   const T_AUDIO = 1;
   const T_FILE = 2;
+  const T_SCREEN = 3;
+  const SCREEN_CODEC_RE = /^(avc1\.[0-9A-Fa-f]{6}|vp8|vp09\.\d{2}\.\d{2}\.\d{2})$/;
+  const SCREEN_BUSY_BYTES = 1536 * 1024;
 
   const DEFAULTS = {
     nick: '',
@@ -41,6 +44,8 @@
     theme: 'dark',
     port: DEFAULT_PORT,
     password: '',
+    screenQuality: '1080p30',
+    linkPreview: true,
     lastIp: '',
   };
 
@@ -71,10 +76,38 @@
     incoming: new Map(),
     lastSpeaking: '',
     overlaySig: '',
+    chatSeq: 0,
+    pendingPreviews: new Map(),
+    messagesByMid: new Map(),
+    sharing: false,
+    watching: 0,
+    pickedSource: '',
+    update: null,
     level: 0,
   };
 
   const engine = new window.AudioEngine(onMicFrame);
+
+  const sender = new window.ScreenSender({
+    send: (frame) => {
+      const ws = st.ws;
+      if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > SCREEN_BUSY_BYTES * 2) return false;
+      ws.send(frame);
+      return true;
+    },
+    busy: () => !st.ws || st.ws.bufferedAmount > SCREEN_BUSY_BYTES,
+    onStop: () => {
+      if (st.sharing) send({ t: 'screen-stop' });
+      st.sharing = false;
+      renderControls();
+      renderPeers();
+    },
+    onError: (text) => addSystem(text),
+  });
+
+  const viewer = new window.ScreenViewer($('screenCanvas'), () => {
+    if (st.watching) send({ t: 'screen-keyframe', id: st.watching });
+  });
 
   /* ---------- Настройки ---------- */
 
@@ -260,6 +293,7 @@
       avatar: cleanAvatar(p && p.avatar),
       muted: !!(p && p.muted),
       deafened: !!(p && p.deafened),
+      screen: p && SCREEN_CODEC_RE.test(String(p.screen || '')) ? String(p.screen) : '',
       lastAudio: 0,
     };
   }
@@ -363,6 +397,13 @@
    */
   function cleanupCall() {
     clearInterval(st.pingTimer);
+    if (st.sharing) { st.sharing = false; sender.stop(); }
+    if (st.watching) {
+      st.watching = 0;
+      viewer.close();
+      if (st.view === 'screen') setView('chat');
+    }
+    closePicker();
     st.ws = null;
     st.connected = false;
     st.connecting = false;
@@ -374,6 +415,8 @@
     st.outgoing.clear();
     for (const f of st.incoming.values()) if (f.url) URL.revokeObjectURL(f.url);
     st.incoming.clear();
+    st.pendingPreviews.clear();
+    st.messagesByMid.clear();
     clearMessages();
     if (st.view !== 'settings') engine.stop();
     renderAll();
@@ -422,6 +465,7 @@
         st.peers.delete(m.id);
         engine.removePeer(m.id);
         if (p) addSystem(`${p.nick} вышел`);
+        if (st.watching === m.id) stopWatching();
         for (const [key, f] of st.incoming) {
           if (f.from === m.id && f.state === 'recv') { f.state = 'cancel'; updateFileCard(key); }
         }
@@ -448,8 +492,19 @@
         st.rtt = Math.round(performance.now() - m.ts);
         renderStatus();
         break;
-      case 'chat':
-        addChat(Number(m.id) | 0, String(m.text == null ? '' : m.text).replace(/[\p{Cc}\p{Cf}]/gu, (ch) => (ch === '\n' ? ch : '')).slice(0, 2000), Number(m.ts) || Date.now());
+      case 'chat': {
+        const id = Number(m.id) | 0;
+        const mid = Number(m.mid) >>> 0;
+        addChat(id, mid, String(m.text == null ? '' : m.text).replace(/[\p{Cc}\p{Cf}]/gu, (ch) => (ch === '\n' ? ch : '')).slice(0, 2000), Number(m.ts) || Date.now());
+        if (id === st.myId && st.pendingPreviews.has(m.n)) {
+          const url = st.pendingPreviews.get(m.n);
+          st.pendingPreviews.delete(m.n);
+          requestPreview(mid, url);
+        }
+        break;
+      }
+      case 'chat-preview':
+        showPreview(Number(m.mid) >>> 0, m.preview);
         break;
       case 'notice':
         addSystem(cleanText(m.text, 200));
@@ -468,6 +523,31 @@
         break;
       case 'file-ack':
         onFileAck(m);
+        break;
+      case 'screen-start': {
+        const p = st.peers.get(Number(m.id) | 0);
+        if (p && SCREEN_CODEC_RE.test(String(m.codec || ''))) {
+          const restart = st.watching === p.id && p.screen !== m.codec;
+          p.screen = String(m.codec);
+          if (restart) startWatching(p.id);
+          else if (!p.screenAnnounced) addSystem(`${p.nick} показывает экран`);
+          p.screenAnnounced = true;
+          renderPeers();
+        }
+        break;
+      }
+      case 'screen-stop': {
+        const p = st.peers.get(Number(m.id) | 0);
+        if (p) {
+          p.screen = '';
+          p.screenAnnounced = false;
+          if (st.watching === p.id) stopWatching();
+          renderPeers();
+        }
+        break;
+      }
+      case 'screen-keyframe':
+        sender.requestKeyframe();
         break;
       default:
         break;
@@ -490,6 +570,11 @@
       if (!st.deafened) engine.play(id, new Int16Array(buf, 4));
     } else if (type === T_FILE && buf.byteLength >= 8) {
       onFileChunk(id, dv.getUint32(4, true), new Uint8Array(buf, 8));
+    } else if (type === T_SCREEN && buf.byteLength > 8) {
+      if (id === st.watching) {
+        viewer.push((dv.getUint8(1) & 1) === 1, dv.getUint32(4, true), new Uint8Array(buf, 8));
+        $('screenHint').hidden = true;
+      }
     }
   }
 
@@ -517,13 +602,218 @@
     }
     st.hosting = true;
     st.hostPort = res.port;
-    const addrs = (res.addresses || []).join(', ');
     const info = $('hostInfo');
     info.textContent = '';
-    info.append(el('b', '', 'Сервер запущен'), document.createTextNode(` · порт ${res.port}`));
-    if (addrs) info.append(el('br'), document.createTextNode(`Локальные адреса: ${addrs}`));
+    const head = el('div', 'sv-sidebar__info-line');
+    head.append(el('span', 'sv-sidebar__ok', 'Сервер запущен'), document.createTextNode(`порт ${res.port}`));
+    const pub = el('div', 'sv-sidebar__info-line', 'Внешний IP: определяется…');
+    info.append(head, pub);
+    const addrs = (res.addresses || []).join(', ');
+    if (addrs) info.appendChild(el('div', 'sv-sidebar__info-line', `Локальный: ${addrs}`));
+    showPublicIp(pub, res.port);
     renderAll();
     connect('127.0.0.1', res.port);
+  }
+
+  /**
+   * Показывает внешний IP хоста с кнопкой копирования.
+   * @param {HTMLElement} line Строка для вывода
+   * @param {number} port Порт сервера
+   */
+  async function showPublicIp(line, port) {
+    let ip = '';
+    try { ip = await api.publicIp(); } catch (e) { ip = ''; }
+    if (!st.hosting) return;
+    line.textContent = '';
+    if (!ip) {
+      line.textContent = 'Внешний IP: не удалось определить';
+      return;
+    }
+    const address = port === DEFAULT_PORT ? ip : `${ip}:${port}`;
+    const btn = el('button', 'sv-sidebar__ip', address);
+    btn.type = 'button';
+    btn.title = 'Скопировать адрес для друзей';
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(address);
+        btn.textContent = 'Скопировано';
+      } catch (e) {
+        btn.textContent = 'Не скопировалось';
+      }
+      setTimeout(() => { btn.textContent = address; }, 1500);
+    });
+    line.append(document.createTextNode('Внешний IP:'), btn);
+  }
+
+  /* ---------- Демонстрация экрана ---------- */
+
+  /**
+   * Открывает выбор экрана или окна для показа.
+   */
+  async function openPicker() {
+    const box = $('pickerSources');
+    box.textContent = '';
+    box.appendChild(el('div', 'sv-modal__empty', 'Загружаю список…'));
+    $('pickerError').hidden = true;
+    $('pickerStart').disabled = true;
+    st.pickedSource = '';
+    const q = document.querySelector(`input[name="quality"][value="${settings.screenQuality}"]`) || document.querySelector('input[name="quality"][value="1080p30"]');
+    q.checked = true;
+    $('picker').hidden = false;
+    let list = [];
+    try { list = (await api.screenSources()) || []; } catch (e) { list = []; }
+    box.textContent = '';
+    if (!list.length) {
+      box.appendChild(el('div', 'sv-modal__empty', 'Не нашлось экранов и окон для показа'));
+      return;
+    }
+    for (const src of list) {
+      const b = el('button', 'sv-modal__source');
+      b.type = 'button';
+      b.dataset.id = src.id;
+      const img = el('img', 'sv-modal__thumb');
+      if (typeof src.thumb === 'string' && src.thumb.startsWith('data:image/')) img.src = src.thumb;
+      img.alt = '';
+      const label = src.kind === 'screen' ? `Экран: ${src.name}` : src.name;
+      b.append(img, el('span', 'sv-modal__name', label));
+      b.title = label;
+      b.addEventListener('click', () => {
+        st.pickedSource = src.id;
+        for (const x of box.children) x.classList.toggle('sv-modal__source_selected', x === b);
+        $('pickerStart').disabled = false;
+      });
+      b.addEventListener('dblclick', startSharing);
+      box.appendChild(b);
+    }
+    box.firstElementChild.focus();
+  }
+
+  /**
+   * Закрывает выбор источника.
+   */
+  function closePicker() {
+    $('picker').hidden = true;
+    $('pickerSources').textContent = '';
+    st.pickedSource = '';
+  }
+
+  /**
+   * Начинает показ выбранного источника.
+   */
+  async function startSharing() {
+    if (!st.pickedSource || !st.connected || st.sharing) return;
+    const quality = (document.querySelector('input[name="quality"]:checked') || {}).value || '1080p30';
+    settings.screenQuality = quality;
+    saveSettings();
+    $('pickerStart').disabled = true;
+    api.screenSelect(st.pickedSource);
+    try {
+      const codec = await sender.start(quality);
+      st.sharing = true;
+      send({ t: 'screen-start', codec });
+      closePicker();
+      addSystem('Вы показываете экран');
+      renderControls();
+      renderPeers();
+    } catch (e) {
+      api.screenSelect('');
+      $('pickerError').textContent = e && e.message ? e.message : 'Не удалось начать показ';
+      $('pickerError').hidden = false;
+      $('pickerStart').disabled = false;
+    }
+  }
+
+  /**
+   * Начинает смотреть экран участника.
+   * @param {number} id Id показывающего
+   */
+  async function startWatching(id) {
+    const p = st.peers.get(id);
+    if (!p || !p.screen) return;
+    if (st.watching && st.watching !== id) send({ t: 'screen-watch', id: st.watching, on: false });
+    st.watching = id;
+    $('screenTitle').textContent = `Экран: ${p.nick}`;
+    $('screenHint').textContent = 'Ждём изображение…';
+    $('screenHint').hidden = false;
+    setView('screen');
+    try {
+      await viewer.open(p.screen);
+    } catch (e) {
+      $('screenHint').textContent = e && e.message ? e.message : 'Не удалось открыть видео';
+      return;
+    }
+    if (st.watching !== id) return;
+    send({ t: 'screen-watch', id, on: true });
+    renderPeers();
+  }
+
+  /**
+   * Перестаёт смотреть экран.
+   */
+  function stopWatching() {
+    if (!st.watching) return;
+    send({ t: 'screen-watch', id: st.watching, on: false });
+    st.watching = 0;
+    viewer.close();
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (st.view === 'screen') setView('chat');
+    renderPeers();
+  }
+
+  /* ---------- Обновления ---------- */
+
+  /**
+   * Проверяет обновления и показывает результат.
+   * @param {boolean} silent Без сообщений, если обновлений нет или нет связи
+   */
+  async function checkUpdates(silent) {
+    const status = $('updateStatus');
+    const btn = $('updateCheckBtn');
+    if (!silent) { status.textContent = 'Проверяю…'; btn.disabled = true; }
+    let res;
+    try { res = await api.checkUpdate(); } catch (e) { res = { ok: false, error: 'Ошибка проверки' }; }
+    btn.disabled = false;
+    st.update = res;
+    const install = $('updateInstallBtn');
+    if (!res || !res.ok) {
+      if (!silent) status.textContent = (res && res.error) || 'Не удалось проверить';
+      install.hidden = true;
+      return;
+    }
+    if (res.available) {
+      status.textContent = `Доступна версия ${res.latest}`;
+      install.hidden = false;
+      install.textContent = res.canInstall ? `Обновить до ${res.latest}` : 'Открыть страницу релиза';
+      $('updateBannerText').textContent = `Доступна версия ${res.latest}`;
+      $('updateBanner').hidden = false;
+    } else {
+      install.hidden = true;
+      $('updateBanner').hidden = true;
+      if (!silent) status.textContent = 'У вас последняя версия';
+    }
+  }
+
+  /**
+   * Скачивает и ставит обновление; программа перезапустится сама.
+   */
+  async function installUpdate() {
+    const res = st.update;
+    if (!res || !res.available) return;
+    if (!res.canInstall) { api.openReleases(); return; }
+    const install = $('updateInstallBtn');
+    install.disabled = true;
+    $('updateCheckBtn').disabled = true;
+    $('updateProgress').hidden = false;
+    $('updateStatus').textContent = 'Скачиваю…';
+    const out = await api.installUpdate();
+    if (out && out.ok) {
+      $('updateStatus').textContent = 'Готово, перезапускаю…';
+      return;
+    }
+    install.disabled = false;
+    $('updateCheckBtn').disabled = false;
+    $('updateProgress').hidden = true;
+    $('updateStatus').textContent = (out && out.error) || 'Не удалось обновить';
   }
 
   /**
@@ -646,6 +936,7 @@
     box.appendChild(node);
     while (box.children.length > MAX_MESSAGES + 1) {
       const first = box.children[0] === $('chatEmpty') ? box.children[1] : box.children[0];
+      if (first.dataset.mid) st.messagesByMid.delete(Number(first.dataset.mid));
       first.remove();
     }
     if (atBottom) box.scrollTop = box.scrollHeight;
@@ -684,10 +975,129 @@
    * @param {string} text Текст
    * @param {number} ts Время
    */
-  function addChat(id, text, ts) {
+  function addChat(id, mid, text, ts) {
     const { root, body } = messageShell(id, ts);
-    body.appendChild(el('div', 'sv-message__text', text));
+    const box = el('div', 'sv-message__text');
+    linkify(box, text);
+    body.appendChild(box);
+    if (mid) {
+      root.dataset.mid = String(mid);
+      st.messagesByMid.set(mid, body);
+    }
     pushMessage(root);
+  }
+
+  /**
+   * Первая ссылка http(s) в тексте.
+   * @param {string} text Текст
+   * @returns {string}
+   */
+  function firstUrl(text) {
+    const parts = splitLinks(text);
+    const link = parts.find((p) => p.url);
+    return link ? link.url : '';
+  }
+
+  /**
+   * Делит текст на обычные куски и ссылки.
+   * @param {string} text Текст
+   * @returns {{text:string, url?:string}[]}
+   */
+  function splitLinks(text) {
+    const out = [];
+    const re = /\bhttps?:\/\/[^\s<>"'«»]+/gi;
+    let last = 0;
+    let m;
+    while ((m = re.exec(text))) {
+      let raw = m[0];
+      raw = raw.replace(/[.,;:!?\]}]+$/, '');
+      while (raw.endsWith(')') && (raw.match(/\)/g) || []).length > (raw.match(/\(/g) || []).length) raw = raw.slice(0, -1);
+      raw = raw.replace(/[.,;:!?]+$/, '');
+      let url = '';
+      try {
+        const u = new URL(raw);
+        if (u.protocol === 'http:' || u.protocol === 'https:') url = u.href;
+      } catch (e) {
+        url = '';
+      }
+      if (m.index > last) out.push({ text: text.slice(last, m.index) });
+      out.push(url ? { text: raw, url } : { text: raw });
+      last = m.index + raw.length;
+      re.lastIndex = last;
+    }
+    if (last < text.length) out.push({ text: text.slice(last) });
+    return out;
+  }
+
+  /**
+   * Выводит текст, превращая ссылки в кликабельные (открываются в браузере).
+   * @param {HTMLElement} box Куда выводить
+   * @param {string} text Текст
+   */
+  function linkify(box, text) {
+    for (const part of splitLinks(text)) {
+      if (!part.url) { box.appendChild(document.createTextNode(part.text)); continue; }
+      const a = el('a', 'sv-message__link', part.text);
+      a.href = part.url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.title = part.url;
+      box.appendChild(a);
+    }
+  }
+
+  /**
+   * Собирает предпросмотр своей ссылки и рассылает его участникам.
+   * @param {number} mid Id сообщения
+   * @param {string} url Ссылка
+   */
+  async function requestPreview(mid, url) {
+    let preview = null;
+    try { preview = await api.linkPreview(url); } catch (e) { preview = null; }
+    if (preview && st.connected) send({ t: 'chat-preview', mid, preview });
+  }
+
+  /**
+   * Добавляет карточку предпросмотра под сообщением.
+   * @param {number} mid Id сообщения
+   * @param {object} p Предпросмотр
+   */
+  function showPreview(mid, p) {
+    if (!settings.linkPreview || !p || typeof p !== 'object') return;
+    const body = st.messagesByMid.get(mid);
+    if (!body || !body.isConnected || body.querySelector('.sv-preview')) return;
+    let url = '';
+    try {
+      const u = new URL(String(p.url || ''));
+      if (u.protocol === 'http:' || u.protocol === 'https:') url = u.href;
+    } catch (e) {
+      url = '';
+    }
+    const title = cleanText(p.title, 200);
+    if (!url || !title) return;
+    const box = $('messages');
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    const card = el('a', 'sv-preview');
+    card.href = url;
+    card.target = '_blank';
+    card.rel = 'noopener noreferrer';
+    const info = el('span', 'sv-preview__info');
+    const site = cleanText(p.site, 100);
+    if (site) info.appendChild(el('span', 'sv-preview__site', site));
+    info.appendChild(el('span', 'sv-preview__title', title));
+    const desc = cleanText(p.description, 300);
+    if (desc) info.appendChild(el('span', 'sv-preview__desc', desc));
+    card.appendChild(info);
+    const image = typeof p.image === 'string' && p.image.length < 150000 && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(p.image) ? p.image : '';
+    if (image) {
+      const img = el('img', 'sv-preview__image');
+      img.src = image;
+      img.alt = '';
+      img.loading = 'lazy';
+      card.appendChild(img);
+    }
+    body.appendChild(card);
+    if (atBottom) box.scrollTop = box.scrollHeight;
   }
 
   /* ---------- Файлы ---------- */
@@ -993,6 +1403,19 @@
       const deaf = p.id === st.myId ? st.deafened : p.deafened;
       if (deaf) icons.appendChild(icon('head-off', 'off'));
       icons.appendChild(muted ? icon('mic-off', 'off') : icon('mic'));
+      if (p.id === st.myId && st.sharing) {
+        icons.appendChild(icon('screen', 'sv-peer__live'));
+      } else if (p.id !== st.myId && p.screen) {
+        const watch = el('button', 'sv-peer__watch');
+        watch.type = 'button';
+        watch.title = st.watching === p.id ? 'Открыть экран' : `Смотреть экран: ${p.nick}`;
+        watch.setAttribute('aria-label', watch.title);
+        watch.append(icon('screen'), document.createTextNode(st.watching === p.id ? 'Открыт' : 'Смотреть'));
+        watch.addEventListener('click', () => {
+          if (st.watching === p.id) setView('screen'); else startWatching(p.id);
+        });
+        icons.appendChild(watch);
+      }
       const eq = el('span', 'sv-peer__eq');
       for (let i = 0; i < 4; i++) eq.appendChild(el('i', 'sv-peer__eq-bar'));
       icons.appendChild(eq);
@@ -1059,6 +1482,15 @@
     gear.appendChild(icon(st.view === 'settings' ? 'chat' : 'gear'));
 
     $('hangupBtn').disabled = !(st.connected || st.connecting);
+
+    const scr = $('screenBtn');
+    scr.className = st.sharing ? 'sv-control sv-control_active' : 'sv-control';
+    scr.textContent = '';
+    scr.appendChild(icon('screen'));
+    scr.title = st.sharing ? 'Остановить демонстрацию' : 'Показать экран';
+    scr.setAttribute('aria-label', scr.title);
+    scr.setAttribute('aria-pressed', String(st.sharing));
+    scr.disabled = !st.connected;
   }
 
   /**
@@ -1152,6 +1584,7 @@
     st.view = view;
     $('chatView').hidden = view !== 'chat';
     $('settingsView').hidden = view !== 'settings';
+    $('screenView').hidden = view !== 'screen';
     renderControls();
     if (view === 'settings') {
       fillSettings();
@@ -1173,6 +1606,7 @@
     document.querySelector(`input[name="theme"][value="${settings.theme}"]`).checked = true;
     $('nsToggle').checked = settings.noiseSuppression;
     $('overlayToggle').checked = settings.overlay;
+    $('previewToggle').checked = settings.linkPreview;
     $('vadRange').value = String(settings.vadThreshold);
     $('vadValue').textContent = `${settings.vadThreshold} дБ`;
     $('inGainRange').value = String(Math.round(settings.inputGain * 100));
@@ -1286,14 +1720,42 @@
       st.deafened = !st.deafened;
       pushState();
     });
-    $('settingsBtn').addEventListener('click', () => setView(st.view === 'settings' ? 'chat' : 'settings'));
+    $('settingsBtn').addEventListener('click', () => {
+      if (st.view === 'settings') setView(st.watching ? 'screen' : 'chat'); else setView('settings');
+    });
+
+    $('screenBtn').addEventListener('click', () => {
+      if (!st.connected) return;
+      if (st.sharing) sender.stop(); else openPicker();
+    });
+    $('pickerCancel').addEventListener('click', closePicker);
+    $('pickerStart').addEventListener('click', startSharing);
+    $('picker').addEventListener('keydown', (e) => { if (e.key === 'Escape') closePicker(); });
+    document.querySelectorAll('input[name="quality"]').forEach((r) => r.addEventListener('change', () => {
+      settings.screenQuality = r.value;
+      saveSettings();
+    }));
+    $('screenCloseBtn').addEventListener('click', stopWatching);
+    $('screenChatBtn').addEventListener('click', () => setView('chat'));
+    $('screenFullBtn').addEventListener('click', () => {
+      const stage = $('screenStage');
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      else stage.requestFullscreen().catch(() => {});
+    });
+    $('screenStage').addEventListener('dblclick', () => $('screenFullBtn').click());
 
     $('composer').addEventListener('submit', (e) => {
       e.preventDefault();
       const input = $('msgInput');
       const text = input.value.trim();
       if (!text || !st.connected) return;
-      send({ t: 'chat', text });
+      const n = ++st.chatSeq;
+      const url = settings.linkPreview ? firstUrl(text) : '';
+      if (url) {
+        st.pendingPreviews.set(n, url);
+        if (st.pendingPreviews.size > 20) st.pendingPreviews.delete(st.pendingPreviews.keys().next().value);
+      }
+      send({ t: 'chat', text, n });
       input.value = '';
     });
     $('attachBtn').addEventListener('click', () => $('fileInput').click());
@@ -1385,6 +1847,10 @@
       engine.setOutputVolume(settings.outputVolume);
       saveSettings();
     });
+    $('previewToggle').addEventListener('change', (e) => {
+      settings.linkPreview = e.target.checked;
+      saveSettings();
+    });
     $('overlayToggle').addEventListener('change', (e) => {
       settings.overlay = e.target.checked;
       saveSettings();
@@ -1393,6 +1859,8 @@
     document.querySelectorAll('input[name="theme"]').forEach((r) => r.addEventListener('change', () => {
       settings.theme = r.value;
       document.documentElement.dataset.theme = settings.theme;
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
       saveSettings();
     }));
     $('portInput').addEventListener('change', (e) => {
@@ -1407,6 +1875,20 @@
     });
 
     navigator.mediaDevices.addEventListener('devicechange', refreshDevices);
+
+    $('updateCheckBtn').addEventListener('click', () => checkUpdates(false));
+    $('updateInstallBtn').addEventListener('click', installUpdate);
+    $('updateBannerBtn').addEventListener('click', () => {
+      setView('settings').then(() => {
+        const box = $('settingsBox');
+        box.scrollTop = $('updateSection').offsetTop;
+      });
+    });
+    api.onUpdateProgress((p) => {
+      const ratio = p && p.total ? Math.min(1, p.received / p.total) : 0;
+      $('updateBar').style.transform = `scaleX(${ratio})`;
+      $('updateStatus').textContent = `Скачиваю ${Math.floor(ratio * 100)}%`;
+    });
 
     api.onPttState((down) => { st.pttDown = !!down; });
     api.onPttCaptured((binding) => {
@@ -1426,6 +1908,12 @@
     $('ipInput').value = settings.lastIp;
     bind();
     st.pttAvailable = await api.pttAvailable();
+    const info = await api.appInfo();
+    if (info) {
+      $('versionText').textContent = info.version;
+      $('footerVersion').textContent = info.version;
+    }
+    checkUpdates(true);
     if (settings.ptt) api.setPtt(settings.ptt);
     renderAll();
     setInterval(tickSpeaking, 100);

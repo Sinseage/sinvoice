@@ -1,7 +1,7 @@
 {
   "name": "sinvoice",
   "productName": "SINVoice",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "SINVoice — голосовой звонок с чатом и передачей файлов по прямому IP",
   "main": "main.js",
   "author": "Дмитрий Собенин (Sinseage)",
@@ -51,5 +51,9 @@
     "portable": {
       "artifactName": "SINVoice-${version}.exe"
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sinseage/sinvoice.git"
   }
 }

@@ -5,11 +5,13 @@
  */
 'use strict';
 
-const { app, BrowserWindow, ipcMain, screen, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, session, desktopCapturer } = require('electron');
 const path = require('path');
 const os = require('os');
 const { RoomServer } = require('./lib/server');
 const { Logger } = require('./lib/logger');
+const { Updater, RELEASES_URL } = require('./lib/updater');
+const { getPreview } = require('./lib/preview');
 
 const log = new Logger(app.getPath('userData'));
 
@@ -26,6 +28,11 @@ let pttBinding = null;
 let pttDown = false;
 let captureMode = false;
 let overlayTimer = 0;
+/** @type {Updater|null} */
+let updater = null;
+/** @type {Map<string, Electron.DesktopCapturerSource>} */
+let screenSources = new Map();
+let selectedSource = null;
 
 const OVERLAY_WIDTH = 224;
 const OVERLAY_ROW = 40;
@@ -69,7 +76,7 @@ function webPrefs() {
 function lockNavigation(win) {
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//i.test(url)) shell.openExternal(url);
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
 }
@@ -300,6 +307,53 @@ handleIpc('server:stop', async () => {
   return { ok: true };
 });
 
+handleIpc('net:publicIp', async () => (updater ? updater.getPublicIp() : ''));
+
+handleIpc('link:preview', async (url) => (typeof url === 'string' ? getPreview(url) : null));
+
+handleIpc('app:info', async () => ({ version: app.getVersion(), releases: RELEASES_URL }));
+
+handleIpc('update:check', async () => updater.check());
+
+handleIpc('update:install', async () => {
+  const res = await updater.download((received, total) => {
+    if (mainWin) mainWin.webContents.send('update:progress', { received, total });
+  });
+  if (res.ok) {
+    if (server) await server.stop();
+    setTimeout(() => app.quit(), 500);
+  }
+  return res;
+});
+
+onIpc('app:openReleases', () => shell.openExternal(RELEASES_URL));
+
+handleIpc('screen:sources', async () => {
+  const list = await desktopCapturer.getSources({
+    types: ['screen', 'window'],
+    thumbnailSize: { width: 320, height: 180 },
+    fetchWindowIcons: false,
+  });
+  screenSources = new Map();
+  const out = [];
+  for (const src of list) {
+    if (overlayWin && src.id === overlayWin.getMediaSourceId()) continue;
+    if (src.thumbnail.isEmpty()) continue;
+    screenSources.set(src.id, src);
+    out.push({
+      id: src.id,
+      name: String(src.name).slice(0, 120),
+      kind: src.id.startsWith('screen:') ? 'screen' : 'window',
+      thumb: src.thumbnail.toDataURL(),
+    });
+  }
+  return out;
+});
+
+onIpc('screen:select', (id) => {
+  selectedSource = typeof id === 'string' ? screenSources.get(id) || null : null;
+});
+
 handleIpc('ptt:available', async () => !!hook);
 onIpc('ptt:set', (b) => {
   const valid = b && (b.type === 'key' || b.type === 'mouse') && Number.isInteger(b.code);
@@ -321,7 +375,17 @@ onIpc('overlay:speaking', (ids) => {
 });
 
 app.whenReady().then(() => {
-  const allowed = new Set(['media', 'speaker-selection']);
+  updater = new Updater({ version: app.getVersion(), logger: log });
+  const allowed = new Set(['media', 'speaker-selection', 'clipboard-sanitized-write', 'display-capture']);
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    const src = selectedSource;
+    selectedSource = null;
+    if (!src || !mainWin || (request.frame && request.frame !== mainWin.webContents.mainFrame)) {
+      callback({});
+      return;
+    }
+    callback({ video: src });
+  });
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
     cb(isOwn(wc) && allowed.has(permission));
   });

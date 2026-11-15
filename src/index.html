@@ -23,6 +23,8 @@
     <symbol id="i-down" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></symbol>
     <symbol id="i-min" viewBox="0 0 24 24"><path d="M5 11h14v2H5z"/></symbol>
     <symbol id="i-max" viewBox="0 0 24 24"><path d="M5 5v14h14V5H5zm12 12H7V7h10v10z"/></symbol>
+    <symbol id="i-screen" viewBox="0 0 24 24"><path d="M21 3H3a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h7v2H8v2h8v-2h-2v-2h7a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 14H3V5h18v12z"/></symbol>
+    <symbol id="i-full" viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></symbol>
     <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></symbol>
   </svg>
 
@@ -52,6 +54,11 @@
           <div class="sv-sidebar__error" data-sv="connError" role="alert" hidden></div>
         </div>
 
+        <div class="sv-sidebar__update" data-sv="updateBanner" hidden>
+          <span class="sv-sidebar__update-text" data-sv="updateBannerText"></span>
+          <button class="sv-button sv-button_ghost sv-button_block" type="button" data-sv="updateBannerBtn">Подробнее</button>
+        </div>
+
         <div class="sv-sidebar__peers">
           <div class="sv-sidebar__title" data-sv="peersTitle">Участники (0)</div>
           <ul class="sv-peers" data-sv="peers"></ul>
@@ -75,11 +82,26 @@
           </form>
         </section>
 
+        <section class="sv-view" data-sv="screenView" hidden>
+          <header class="sv-view__head sv-view__head_row">
+            <h1 class="sv-view__title sv-view__title_ellipsis" data-sv="screenTitle">Экран</h1>
+            <div class="sv-view__actions">
+              <button class="sv-button sv-button_ghost" type="button" data-sv="screenChatBtn">Чат</button>
+              <button class="sv-button sv-button_ghost" type="button" data-sv="screenFullBtn" aria-label="Во весь экран" title="Во весь экран"><svg class="sv-icon"><use href="#i-full"/></svg></button>
+              <button class="sv-button sv-button_ghost" type="button" data-sv="screenCloseBtn">Закрыть</button>
+            </div>
+          </header>
+          <div class="sv-stage" data-sv="screenStage">
+            <canvas class="sv-stage__canvas" data-sv="screenCanvas" width="16" height="9"></canvas>
+            <div class="sv-stage__hint" data-sv="screenHint">Ждём изображение…</div>
+          </div>
+        </section>
+
         <section class="sv-view" data-sv="settingsView" hidden>
           <header class="sv-view__head">
             <h1 class="sv-view__title">Настройки</h1>
           </header>
-          <div class="sv-settings">
+          <div class="sv-settings" data-sv="settingsBox">
             <section class="sv-settings__section">
               <label class="sv-row">
                 <span class="sv-row__label">Ник</span>
@@ -148,6 +170,10 @@
                 <span class="sv-row__label sv-row__label_wide">Оверлей поверх игр</span>
                 <span class="sv-toggle"><input class="sv-toggle__input" type="checkbox" data-sv="overlayToggle"><span class="sv-toggle__track"></span></span>
               </label>
+              <label class="sv-row sv-row_toggle">
+                <span class="sv-row__label sv-row__label_wide">Предпросмотр ссылок</span>
+                <span class="sv-toggle"><input class="sv-toggle__input" type="checkbox" data-sv="previewToggle"><span class="sv-toggle__track"></span></span>
+              </label>
               <div class="sv-row">
                 <span class="sv-row__label">Тема</span>
                 <div class="sv-seg" role="radiogroup" aria-label="Тема">
@@ -169,6 +195,22 @@
               </label>
               <p class="sv-settings__note">Пароль общий: им защищается ваш сервер, и он же отправляется при подключении к чужому. Для друзей из интернета откройте на роутере TCP-порт и сообщите им внешний IP.</p>
             </section>
+
+            <section class="sv-settings__section" data-sv="updateSection">
+              <h2 class="sv-settings__title">Обновления</h2>
+              <div class="sv-row">
+                <span class="sv-row__label">Версия</span>
+                <span class="sv-row__value" data-sv="versionText"></span>
+              </div>
+              <div class="sv-row sv-row_wrap">
+                <button class="sv-button sv-button_ghost" type="button" data-sv="updateCheckBtn">Проверить обновления</button>
+                <button class="sv-button sv-button_primary" type="button" data-sv="updateInstallBtn" hidden>Обновить</button>
+                <span class="sv-hint" data-sv="updateStatus" role="status"></span>
+              </div>
+              <div class="sv-settings__progress" data-sv="updateProgress" hidden><i class="sv-settings__progress-bar" data-sv="updateBar"></i></div>
+            </section>
+
+            <footer class="sv-settings__footer">SINVoice <span data-sv="footerVersion"></span> · © Дмитрий Собенин (Sinseage) · <a class="sv-settings__link" href="https://github.com/Sinseage/sinvoice" target="_blank" rel="noopener">GitHub</a></footer>
           </div>
         </section>
       </main>
@@ -182,6 +224,7 @@
       <div class="sv-bar__controls">
         <button class="sv-control" type="button" data-sv="micBtn"></button>
         <button class="sv-control" type="button" data-sv="headBtn"></button>
+        <button class="sv-control" type="button" data-sv="screenBtn"></button>
         <span class="sv-bar__sep"></span>
         <button class="sv-control" type="button" data-sv="settingsBtn"></button>
         <button class="sv-control sv-control_danger" type="button" data-sv="hangupBtn" aria-label="Завершить звонок" title="Завершить звонок"><svg class="sv-icon"><use href="#i-hangup"/></svg></button>
@@ -189,7 +232,26 @@
     </footer>
   </div>
 
+  <div class="sv-modal" data-sv="picker" hidden>
+    <div class="sv-modal__window" role="dialog" aria-modal="true" aria-labelledby="sv-picker-title">
+      <h2 class="sv-modal__title" id="sv-picker-title">Демонстрация экрана</h2>
+      <div class="sv-modal__sources" data-sv="pickerSources"></div>
+      <div class="sv-modal__footer">
+        <div class="sv-seg" role="radiogroup" aria-label="Качество">
+          <label class="sv-seg__item"><input class="sv-seg__input" type="radio" name="quality" value="720p30"><span class="sv-seg__label">720p 30</span></label>
+          <label class="sv-seg__item"><input class="sv-seg__input" type="radio" name="quality" value="1080p30"><span class="sv-seg__label">1080p 30</span></label>
+          <label class="sv-seg__item"><input class="sv-seg__input" type="radio" name="quality" value="1080p60"><span class="sv-seg__label">1080p 60</span></label>
+        </div>
+        <span class="sv-modal__spacer"></span>
+        <button class="sv-button sv-button_ghost" type="button" data-sv="pickerCancel">Отмена</button>
+        <button class="sv-button sv-button_primary" type="button" data-sv="pickerStart" disabled>Показать</button>
+      </div>
+      <p class="sv-modal__error" data-sv="pickerError" role="alert" hidden></p>
+    </div>
+  </div>
+
   <script src="audio.js"></script>
+  <script src="screen.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
