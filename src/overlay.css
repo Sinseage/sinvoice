@@ -1,0 +1,65 @@
+/**
+ * SINVoice — стили оверлея.
+ * @author Дмитрий Собенин (Sinseage)
+ */
+html, body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  font: 600 14px/1 "Segoe UI", system-ui, sans-serif;
+  color: #fff;
+  user-select: none;
+}
+.ov {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  display: inline-block;
+  min-width: 140px;
+  max-width: 212px;
+  background: rgba(18, 18, 24, .72);
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 10px;
+}
+.ov:empty { display: none; }
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 6px;
+  opacity: .78;
+  transition: opacity .1s;
+}
+.row.speaking { opacity: 1; }
+.av {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  box-shadow: 0 0 0 2px transparent;
+}
+.av img { width: 100%; height: 100%; object-fit: cover; }
+.speaking .av { box-shadow: 0 0 0 2px #3ccf6e; }
+.nick {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
+}
+.eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; visibility: hidden; }
+.eq i { width: 3px; background: #8a6cf0; border-radius: 1px; transform-origin: bottom; }
+.eq i:nth-child(1) { height: 5px; } .eq i:nth-child(2) { height: 8px; }
+.eq i:nth-child(3) { height: 11px; } .eq i:nth-child(4) { height: 14px; }
+.speaking .eq { visibility: visible; }
+.speaking .eq i { animation: eq .45s ease-in-out infinite alternate; }
+.speaking .eq i:nth-child(2) { animation-delay: .1s; }
+.speaking .eq i:nth-child(3) { animation-delay: .2s; }
+@keyframes eq { from { transform: scaleY(.4); } to { transform: scaleY(1); } }
+.muted { width: 14px; height: 14px; fill: #e5484d; flex: none; }
